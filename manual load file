@@ -1,0 +1,59 @@
+import boto3
+import pandas as pd
+import io
+import pyodbc
+import csv
+
+def lambda_handler(event, context):
+    # Your database connection details
+    db_host = 'the endpoint link'
+    db_user = 'usernamer'
+    db_password = 'your password'
+    db_name = 'name of the database'
+
+    # S3 bucket details
+    bucket_name = 'the s3 bucket name'
+    file_key = 'the csv file'
+
+    # Connection string for SQL Server
+    connectionString = f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={db_host};DATABASE={db_name};UID={db_user};PWD={db_password}'
+    conn = pyodbc.connect(connectionString)
+    cursor = conn.cursor()
+
+    # Boto3 S3 client
+    s3 = boto3.client('s3')
+    download_path = '/tmp/file.csv'
+    s3.download_file(bucket_name, file_key, download_path)
+
+    # Open the CSV file and read the header
+    with open(download_path, 'r', encoding='utf-8-sig') as file:
+        reader = csv.reader(file)
+        header = next(reader)
+    
+     # Check if the table already exists
+        table_exists_query = "SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'dynamic_table'"
+        cursor.execute(table_exists_query)
+        result = cursor.fetchone()
+
+        # If the table does not exist, create it
+        if not result:
+            create_table_query = "CREATE TABLE dynamic_table ({})".format(', '.join([f'[{column}] VARCHAR(MAX)' for column in header]))
+            cursor.execute(create_table_query)
+
+        # Prepare the INSERT INTO statement
+        insert_query = "INSERT INTO dynamic_table ({}) VALUES ({})".format(', '.join(header), ', '.join(['?' for _ in header]))
+        
+        # Insert each row from the CSV file into the table
+        for row in reader:
+            row = [None if value == '' else value for value in row]
+            cursor.execute(insert_query, row)
+
+    # Commit the transaction and close the connection
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+    return {
+        'statusCode': 200,
+        'body': 'Data successfully imported into the database!'
+    }
